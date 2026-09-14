@@ -31,6 +31,15 @@ def undo(d,parent,k):
  if k==2:return bytes((a+b)&255 for a,b in zip(d,parent))
  return bytes((b-a)&255 for a,b in zip(d,parent))
 
+def bm(a):
+ C=B=1;L=0;m=-1;H=0
+ for N,v in enumerate(a):
+  H=H<<1|(v>>7);d=(C&H).bit_count()&1
+  if d:
+   T=C;C^=B<<(N-m)
+   if 2*L<=N:L=N+1-L;B=T;m=N
+ return C
+
 def residual(cs,used):
  g={}
  for i,(t,p,n,x) in enumerate(cs):
@@ -43,8 +52,13 @@ def add(out,x):
 def compress(src,dst):
  data=base64.b64decode(open(src,'rb').read());cs=chunks(data);out=bytearray()
  add(out,data[:80]+b''.join(n.to_bytes(4,'big')+t+p for t,p,n,x in cs))
- hs=[i for i,c in enumerate(cs) if c[0]==b'HASH' and c[1][1]==0];du=[i for i,c in enumerate(cs) if c[0]==b'DUP ' and c[1][-4:]==b'F\xbf\xa5\xf3'];used=set(hs+du)
- add(out,b''.join(cs[i][3][:28]+cs[i][3][-4:] for i in hs)+b''.join(cs[i][3][-4:] for i in du))
+ hs=[i for i,c in enumerate(cs) if c[0]==b'HASH' and c[1][1]==0];du=[i for i,c in enumerate(cs) if c[0]==b'DUP ' and c[1][-4:]==b'F\xbf\xa5\xf3'];mt=[i for i,c in enumerate(cs) if c[0]==b'MTST'];used=set(hs+du+mt)
+ z=bytearray(b''.join(cs[i][3][:28]+cs[i][3][-4:] for i in hs)+b''.join(cs[i][3][-4:] for i in du))
+ for mode,L in [(1,20188),(4,19937)]:
+  C=bm(cs[next(i for i in mt if cs[i][1][1]==mode)][3][0::4][:50000]);assert C.bit_length()-1==L;z+=C.to_bytes((L+8)//8,'big')
+ for i in mt:
+  L=20188 if cs[i][1][1]==1 else 19937;x=cs[i][3];z+=x[:4*L]+x[-4:]
+ add(out,z)
  for (tag,n),plan in F.items():
   ids=[i for i,c in enumerate(cs) if c[0]==tag and c[2]==n and i not in used];assert len(ids)==len(plan);used.update(ids)
   z=bytearray()
@@ -63,13 +77,26 @@ def decompress(src,dst):
  a=open(src,'rb').read();meta,o=take(a,0);cs=[]
  for q in range(80,len(meta),14):
   n=int.from_bytes(meta[q:q+4],'big');cs.append([meta[q+4:q+8],meta[q+8:q+14],n,None])
- hs=[i for i,c in enumerate(cs) if c[0]==b'HASH' and c[1][1]==0];du=[i for i,c in enumerate(cs) if c[0]==b'DUP ' and c[1][-4:]==b'F\xbf\xa5\xf3'];z,o=take(a,o);used=set(hs+du)
+ hs=[i for i,c in enumerate(cs) if c[0]==b'HASH' and c[1][1]==0];du=[i for i,c in enumerate(cs) if c[0]==b'DUP ' and c[1][-4:]==b'F\xbf\xa5\xf3'];mt=[i for i,c in enumerate(cs) if c[0]==b'MTST'];z,o=take(a,o);used=set(hs+du+mt)
  for i in hs:
   e=z[:32];z=z[32:];n=cs[i][2];h=cs[i][1][-4:]+e[:28];x=bytearray(h[4:])
   while len(x)<n-4:h=sha256(h).digest();x+=h
   cs[i][3]=bytes(x[:n-4])+e[28:]
  for i in du:
   e=z[:4];z=z[4:];q=next(c for c in cs if c[0]==b'HASH' and c[1][-4:]==cs[i][1][-4:]);cs[i][3]=q[3][:cs[i][2]-4]+e
+ P={}
+ for mode,L in [(1,20188),(4,19937)]:
+  w=(L+8)//8;C=int.from_bytes(z[:w],'big');z=z[w:];P[mode]=(L,[k for k in range(1,L+1) if C>>k&1])
+ for i in mt:
+  n=cs[i][2];L,T=P[cs[i][1][1]];e=z[:4*L+4];z=z[4*L+4:];x=bytearray(n)
+  for k in range(4):
+   y=bytearray(e[k:4*L:4])
+   while len(y)<n//4-1:
+    j=len(y);v=0
+    for q in T:v^=y[j-q]
+    y.append(v)
+   y.append(e[4*L+k]);x[k::4]=y
+  cs[i][3]=bytes(x)
  for (tag,n),plan in F.items():
   ids=[i for i,c in enumerate(cs) if c[0]==tag and c[2]==n and i not in used];used.update(ids);x,o=take(a,o);raw=[x[j*n:(j+1)*n] for j in range(len(ids))]
   done=[None]*len(ids)
