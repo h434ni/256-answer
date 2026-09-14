@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 import sys,base64,lzma
+from hashlib import sha256
 
 # Each byte is either 255 (literal root) or transform<<5 | parent.
-Z=[{'id':33,'preset':6}]
+Z=[{'id':33,'preset':7}]
 F={
  (b'IMG ',655360):bytes.fromhex('2929ff222eff2d21ffff2d2dff25ffff'),
  (b'CA30',253952):bytes.fromhex('2542ff2022ff7dff502fff28ff24ffffff4fffff24ff4822213739765d7127ff'),
  (b'A181',237600):bytes.fromhex('ffffffffffffffffffffffffffffffffffffff3fffffff27ffffffffffffffff'),
  (b'PRNG',240328):bytes.fromhex('ffffffffffff40ffffffffffff60ffffffffff66ffffff47'),
- (b'DUP ',174784):bytes.fromhex('ff2bffffffffff26ffffffff'),
+ (b'DUP ',174784):bytes.fromhex('ff2affffffffff26ffffff'),
  (b'WAVE',131090):bytes.fromhex('ff43ffffff41ffff232822ff'),
  (b'SEQ2',174784):bytes.fromhex('64ff2421ffff'),
  (b'SEQ2',149991):bytes.fromhex('21ffff'),
@@ -42,13 +43,16 @@ def add(out,x):
 def compress(src,dst):
  data=base64.b64decode(open(src,'rb').read());cs=chunks(data);out=bytearray()
  add(out,data[:80]+b''.join(n.to_bytes(4,'big')+t+p for t,p,n,x in cs))
- used=set()
+ hs=[i for i,c in enumerate(cs) if c[0]==b'HASH' and c[1][1]==0];du=[i for i,c in enumerate(cs) if c[0]==b'DUP ' and c[1][-4:]==b'F\xbf\xa5\xf3'];used=set(hs+du)
+ add(out,b''.join(cs[i][3][:28]+cs[i][3][-4:] for i in hs)+b''.join(cs[i][3][-4:] for i in du))
  for (tag,n),plan in F.items():
-  ids=[i for i,c in enumerate(cs) if c[0]==tag and c[2]==n];assert len(ids)==len(plan);used.update(ids)
+  ids=[i for i,c in enumerate(cs) if c[0]==tag and c[2]==n and i not in used];assert len(ids)==len(plan);used.update(ids)
+  z=bytearray()
   for j,code in enumerate(plan):
    x=cs[ids[j]][3]
    if code!=255:x=delta(x,cs[ids[code&31]][3],code>>5)
-   add(out,x)
+   z+=x
+  add(out,z)
  for ids in residual(cs,used):add(out,b''.join(cs[i][3] for i in ids))
  open(dst,'wb').write(out)
 
@@ -59,10 +63,15 @@ def decompress(src,dst):
  a=open(src,'rb').read();meta,o=take(a,0);cs=[]
  for q in range(80,len(meta),14):
   n=int.from_bytes(meta[q:q+4],'big');cs.append([meta[q+4:q+8],meta[q+8:q+14],n,None])
- used=set()
+ hs=[i for i,c in enumerate(cs) if c[0]==b'HASH' and c[1][1]==0];du=[i for i,c in enumerate(cs) if c[0]==b'DUP ' and c[1][-4:]==b'F\xbf\xa5\xf3'];z,o=take(a,o);used=set(hs+du)
+ for i in hs:
+  e=z[:32];z=z[32:];n=cs[i][2];h=cs[i][1][-4:]+e[:28];x=bytearray(h[4:])
+  while len(x)<n-4:h=sha256(h).digest();x+=h
+  cs[i][3]=bytes(x[:n-4])+e[28:]
+ for i in du:
+  e=z[:4];z=z[4:];q=next(c for c in cs if c[0]==b'HASH' and c[1][-4:]==cs[i][1][-4:]);cs[i][3]=q[3][:cs[i][2]-4]+e
  for (tag,n),plan in F.items():
-  ids=[i for i,c in enumerate(cs) if c[0]==tag and c[2]==n];used.update(ids);raw=[]
-  for _ in ids:x,o=take(a,o);raw.append(x)
+  ids=[i for i,c in enumerate(cs) if c[0]==tag and c[2]==n and i not in used];used.update(ids);x,o=take(a,o);raw=[x[j*n:(j+1)*n] for j in range(len(ids))]
   done=[None]*len(ids)
   def get(j):
    if done[j] is None:
