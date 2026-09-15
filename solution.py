@@ -13,7 +13,7 @@ F={
  (b'WAVE',131090):bytes.fromhex('ff43ffffff41ffff232822ff'),
  (b'SEQ2',174784):bytes.fromhex('64ff2421ffff'),
  (b'SEQ2',149991):bytes.fromhex('21ffff'),
- (b'SEQ2',124992):bytes.fromhex('ffffff'),
+ (b'SEQ2',124992):bytes.fromhex('fffffd'),
 }
 
 def chunks(data):
@@ -117,6 +117,8 @@ def compress(src,dst):
   z=bytearray()
   for j,code in enumerate(plan):
    x=cs[ids[j]][3]
+   if tag==b'SEQ2' and n==124992 and code==253:
+    d=cs[ids[1]][1][-4:]+cs[ids[1]][3][:-4];q=b''.join(int.from_bytes(d[k:k+4],'big').to_bytes(4,'little') for k in range(n-4,-1,-4));assert q==cs[ids[j]][1][-4:]+x[:-4];z+=x[-4:]+bytes(n-4);continue
    if tag==b'CA30' and code==254:
     d=cs[ids[j]][1][-4:]+x[:-4];assert ca(d[:256],n)==d;x=x[:252]+x[-4:]+bytes(n-256);z+=x;continue
    if code!=255:x=delta(x,cs[ids[code&31]][3],code>>5)
@@ -125,7 +127,7 @@ def compress(src,dst):
    if tag==b'IMG ' and j in {2: 4, 5: 1, 6: 2048, 8: 1, 9: 1, 12: 2048, 14: 4, 15: 1}:x=pred(x,0,{2: 4, 5: 1, 6: 2048, 8: 1, 9: 1, 12: 2048, 14: 4, 15: 1}[j])
    if tag==b'A181' and j in {1: 4, 2: 4, 10: 16, 12: 4, 15: 16, 16: 4, 17: 4, 26: 4, 30: 4}:x=lane(x,{1: 4, 2: 4, 10: 16, 12: 4, 15: 16, 16: 4, 17: 4, 26: 4, 30: 4}[j])
    if tag==b'A181' and j in {12: 1}:x=pred(x,0,{12: 1}[j])
-   if tag==b'SEQ2' and n==124992 and j in (1,2):x=wpred(x,4,2,'big' if j==1 else 'little')
+   if tag==b'SEQ2' and n==124992 and j==1:x=wpred(x,4,2,'big')
    if tag==b'CA30':x=pred(x)
    z+=x
   add(out,z)
@@ -188,7 +190,7 @@ def decompress(src,dst):
    for j,L in {12: 1}.items():raw[j]=pred(raw[j],1,L)
    for j,L in {1: 4, 2: 4, 10: 16, 12: 4, 15: 16, 16: 4, 17: 4, 26: 4, 30: 4}.items():raw[j]=lane(raw[j],L,1)
   if tag==b'SEQ2' and n==124992:
-   for j in (1,2):raw[j]=wpred(raw[j],4,2,'big' if j==1 else 'little',1)
+   raw[1]=wpred(raw[1],4,2,'big',1);d=cs[ids[1]][1][-4:]+raw[1][:-4];q=b''.join(int.from_bytes(d[k:k+4],'big').to_bytes(4,'little') for k in range(n-4,-1,-4));raw[2]=q[4:]+raw[2][:4]
   if w:raw=[lane(y,w,1) for y in raw]
   if tag==b'CA30':
    for j,y in enumerate(raw):
@@ -198,7 +200,7 @@ def decompress(src,dst):
   done=[None]*len(ids)
   def get(j):
    if done[j] is None:
-    code=plan[j];done[j]=raw[j] if code in (254,255) else undo(raw[j],get(code&31),code>>5)
+    code=plan[j];done[j]=raw[j] if code in (253,254,255) else undo(raw[j],get(code&31),code>>5)
    return done[j]
   for j,i in enumerate(ids):cs[i][3]=get(j)
  rg=residual(cs,used);cm={1:(1,4),6:(6,7),12:(12,13)};skip={4,7,13}
