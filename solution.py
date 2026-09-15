@@ -82,8 +82,10 @@ def compress(src,dst):
    if code!=255:x=delta(x,cs[ids[code&31]][3],code>>5)
    w={b'IMG ':3,b'WAVE':2}.get(tag)
    if w:x=lane(x,w)
-   if tag==b'CA30':x=pred(x)
    if tag==b'IMG ' and j in {2: 4, 5: 1, 6: 2048, 8: 1, 9: 1, 12: 2048, 14: 4, 15: 1}:x=pred(x,0,{2: 4, 5: 1, 6: 2048, 8: 1, 9: 1, 12: 2048, 14: 4, 15: 1}[j])
+   if tag==b'A181' and j in {1: 4, 2: 4, 10: 16, 12: 4, 15: 16, 16: 4, 17: 4, 26: 4, 30: 4}:x=lane(x,{1: 4, 2: 4, 10: 16, 12: 4, 15: 16, 16: 4, 17: 4, 26: 4, 30: 4}[j])
+   if tag==b'A181' and j in {12: 1}:x=pred(x,0,{12: 1}[j])
+   if tag==b'CA30':x=pred(x)
    z+=x
   add(out,z)
  rg=residual(cs,used);cm={1:(1,4),2:(2,10),6:(6,7),13:(13,14)};skip={4,7,10,14}
@@ -136,6 +138,9 @@ def decompress(src,dst):
   w={b'IMG ':3,b'WAVE':2}.get(tag)
   if tag==b'IMG ':
    for j,L in {2: 4, 5: 1, 6: 2048, 8: 1, 9: 1, 12: 2048, 14: 4, 15: 1}.items():raw[j]=pred(raw[j],1,L)
+  if tag==b'A181':
+   for j,L in {12: 1}.items():raw[j]=pred(raw[j],1,L)
+   for j,L in {1: 4, 2: 4, 10: 16, 12: 4, 15: 16, 16: 4, 17: 4, 26: 4, 30: 4}.items():raw[j]=lane(raw[j],L,1)
   if w:raw=[lane(y,w,1) for y in raw]
   if tag==b'CA30':raw=[pred(y,1) for y in raw]
   done=[None]*len(ids)
