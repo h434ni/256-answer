@@ -37,9 +37,9 @@ def lane(x,w,r=0):
  for i in range(w):n=len(y[i::w]);y[i::w]=x[o:o+n];o+=n
  return bytes(y)
 
-def pred(x,r=0):
+def pred(x,r=0,L=32):
  y=bytearray(x)
- for i in range(32,len(y)):y[i]=((y[i]+y[i-32]) if r else (x[i]-x[i-32]))&255
+ for i in range(L,len(y)):y[i]=((y[i]+y[i-L]) if r else (x[i]-x[i-L]))&255
  return bytes(y)
 
 def bm(a):
@@ -83,9 +83,13 @@ def compress(src,dst):
    w={b'IMG ':3,b'WAVE':2}.get(tag)
    if w:x=lane(x,w)
    if tag==b'CA30':x=pred(x)
+   if tag==b'IMG ' and j in {2: 4, 5: 1, 6: 2048, 8: 1, 9: 1, 12: 2048, 14: 4, 15: 1}:x=pred(x,0,{2: 4, 5: 1, 6: 2048, 8: 1, 9: 1, 12: 2048, 14: 4, 15: 1}[j])
    z+=x
   add(out,z)
- for ids in residual(cs,used):add(out,b''.join(cs[i][3] for i in ids))
+ rg=residual(cs,used);cm={1:(1,4),2:(2,10),6:(6,7),13:(13,14)};skip={4,7,10,14}
+ for k,ids in enumerate(rg):
+  if k in skip:continue
+  ks=cm.get(k,(k,));add(out,b''.join(cs[i][3] for j in ks for i in rg[j]))
  open(dst,'wb').write(out)
 
 def take(a,o):
@@ -130,6 +134,8 @@ def decompress(src,dst):
  for (tag,n),plan in F.items():
   ids=[i for i,c in enumerate(cs) if c[0]==tag and c[2]==n and i not in used];used.update(ids);x,o=take(a,o);raw=[x[j*n:(j+1)*n] for j in range(len(ids))]
   w={b'IMG ':3,b'WAVE':2}.get(tag)
+  if tag==b'IMG ':
+   for j,L in {2: 4, 5: 1, 6: 2048, 8: 1, 9: 1, 12: 2048, 14: 4, 15: 1}.items():raw[j]=pred(raw[j],1,L)
   if w:raw=[lane(y,w,1) for y in raw]
   if tag==b'CA30':raw=[pred(y,1) for y in raw]
   done=[None]*len(ids)
@@ -138,9 +144,12 @@ def decompress(src,dst):
     code=plan[j];done[j]=raw[j] if code==255 else undo(raw[j],get(code&31),code>>5)
    return done[j]
   for j,i in enumerate(ids):cs[i][3]=get(j)
- for ids in residual(cs,used):
+ rg=residual(cs,used);cm={1:(1,4),2:(2,10),6:(6,7),13:(13,14)};skip={4,7,10,14}
+ for k,ids in enumerate(rg):
+  if k in skip:continue
   x,o=take(a,o);q=0
-  for i in ids:n=cs[i][2];cs[i][3]=x[q:q+n];q+=n
+  for j in cm.get(k,(k,)):
+   for i in rg[j]:n=cs[i][2];cs[i][3]=x[q:q+n];q+=n
  assert o==len(a) and all(c[3] is not None for c in cs)
  data=bytearray(meta[:80])
  for t,p,n,x in cs:data+=n.to_bytes(4,'big')+t+p+x
