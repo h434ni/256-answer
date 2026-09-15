@@ -51,6 +51,25 @@ def bm(a):
    if 2*L<=N:L=N+1-L;B=T;m=N
  return C
 
+
+def lfit(w,n=624,m=227):
+ B=[None]*128;rank=0
+ for i in range(192):
+  q=w[i]|w[i+1]<<32|w[i+m]<<64|w[i+m+1]<<96;y=w[i+n]
+  while q:
+   p=q.bit_length()-1;v=B[p]
+   if v is None:B[p]=(q,y);rank+=1;break
+   q^=v[0];y^=v[1]
+  assert q or not y
+ assert rank==128
+ return B
+
+def lp(q,B):
+ y=0
+ while q:
+  p=q.bit_length()-1;v=B[p];q^=v[0];y^=v[1]
+ return y
+
 def residual(cs,used):
  g={}
  for i,(t,p,n,x) in enumerate(cs):
@@ -69,10 +88,16 @@ def compress(src,dst):
  add(out,data[:80]+b''.join(n.to_bytes(4,'big')+t+p for t,p,n,x in cs))
  hs=[i for i,c in enumerate(cs) if c[0]==b'HASH' and c[1][1]==0];du=[i for i,c in enumerate(cs) if c[0]==b'DUP ' and c[1][-4:]==b'F\xbf\xa5\xf3'];mt=[i for i,c in enumerate(cs) if c[0]==b'MTST'];tc=[i for i,c in enumerate(cs) if c[0]==b'TOC '];s2=[i for i,c in enumerate(cs) if c[0]==b'SEQ2' and c[2]==31248];cn=[i for i,c in enumerate(cs) if c[0]==b'CNST' and c[1][0]>0];used=set(hs+du+mt+tc+s2+cn)
  z=bytearray(b''.join(cs[i][3][:28]+cs[i][3][-4:] for i in hs)+b''.join(cs[i][3][-4:] for i in du+tc+s2+cn))
- for mode,L in [(1,20188),(4,19937)]:
-  C=bm(cs[next(i for i in mt if cs[i][1][1]==mode)][3][0::4][:50000]);assert C.bit_length()-1==L;z+=C.to_bytes((L+8)//8,'big')
+ C=bm(cs[next(i for i in mt if cs[i][1][1]==1)][3][0::4][:50000]);assert C.bit_length()-1==20188;z+=C.to_bytes((20188+8)//8,'big')
  for i in mt:
-  L=20188 if cs[i][1][1]==1 else 19937;x=cs[i][3];z+=x[:4*L]+x[-4:]
+  if cs[i][1][1]==1:z+=cs[i][3][:4*20188]+cs[i][3][-4:]
+ m4=[i for i in mt if cs[i][1][1]==4]
+ def words4(i):
+  d=cs[i][1][-4:]+cs[i][3][:-4];return [int.from_bytes(d[j:j+4],'big') for j in range(0,len(d)-3,4)]
+ B=lfit(words4(m4[0]))
+ for q,y in B:z+=q.to_bytes(16,'big')+y.to_bytes(4,'big')
+ for i in m4:
+  d=cs[i][1][-4:]+cs[i][3][:-4];z+=d[:2496]+d[len(d)//4*4:]+cs[i][3][-4:]
  add(out,z)
  for (tag,n),plan in F.items():
   ids=[i for i,c in enumerate(cs) if c[0]==tag and c[2]==n and i not in used];assert len(ids)==len(plan);used.update(ids)
@@ -120,11 +145,9 @@ def decompress(src,dst):
   e=z[:4];z=z[4:];p=cs[i][1];n=cs[i][2];N=n+4;q=(2,3,5,7)[p[0]];x=(math.isqrt(q<<(16*N))%(1<<(8*N))).to_bytes(N,'big')
   if p[0]==1:x=bytes((v+j)&255 for j,v in enumerate(x))
   cs[i][3]=x[4:n]+e
- P={}
- for mode,L in [(1,20188),(4,19937)]:
-  w=(L+8)//8;C=int.from_bytes(z[:w],'big');z=z[w:];P[mode]=(L,[k for k in range(1,L+1) if C>>k&1])
- for i in mt:
-  n=cs[i][2];L,T=P[cs[i][1][1]];e=z[:4*L+4];z=z[4*L+4:];x=bytearray(n)
+ L=20188;w=(L+8)//8;C=int.from_bytes(z[:w],'big');z=z[w:];T=[k for k in range(1,L+1) if C>>k&1]
+ for i in [i for i in mt if cs[i][1][1]==1]:
+  n=cs[i][2];e=z[:4*L+4];z=z[4*L+4:];x=bytearray(n)
   for k in range(4):
    y=bytearray(e[k:4*L:4])
    while len(y)<n//4-1:
@@ -133,6 +156,13 @@ def decompress(src,dst):
     y.append(v)
    y.append(e[4*L+k]);x[k::4]=y
   cs[i][3]=bytes(x)
+ B=[]
+ for p in range(128):B.append((int.from_bytes(z[:16],'big'),int.from_bytes(z[16:20],'big')));z=z[20:]
+ for i in [i for i in mt if cs[i][1][1]==4]:
+  n=cs[i][2];r=n%4;e=z[:2496+r+4];z=z[2496+r+4:];w4=[int.from_bytes(e[j:j+4],'big') for j in range(0,2496,4)]
+  while len(w4)<n//4:
+   j=len(w4)-624;q=w4[j]|w4[j+1]<<32|w4[j+227]<<64|w4[j+228]<<96;w4.append(lp(q,B))
+  d=b''.join(v.to_bytes(4,'big') for v in w4)+e[2496:2496+r];assert d[:4]==cs[i][1][-4:];cs[i][3]=d[4:]+e[-4:]
  for (tag,n),plan in F.items():
   ids=[i for i,c in enumerate(cs) if c[0]==tag and c[2]==n and i not in used];used.update(ids);x,o=take(a,o);raw=[x[j*n:(j+1)*n] for j in range(len(ids))]
   w={b'IMG ':3,b'WAVE':2}.get(tag)
