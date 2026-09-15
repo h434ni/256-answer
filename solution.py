@@ -6,7 +6,7 @@ from hashlib import sha256
 Z=[{'id':33,'preset':7}]
 F={
  (b'IMG ',655360):bytes.fromhex('2929ff222eff2d21ffff2d2dff25ffff'),
- (b'CA30',253952):bytes.fromhex('2542ff2022ff7dff502fff28ff24ffffff4fffff24ff4822213739765d7127ff'),
+ (b'CA30',253952):bytes.fromhex('2542fe20feff7dff502fff28fffeffffff4ffffffeff4822213739765d7127ff'),
  (b'A181',237600):bytes.fromhex('ffffffffffffffffffffffffffffffffffffff3fffffff27ffffffffffffffff'),
  (b'PRNG',240328):bytes.fromhex('ffffffffffff40ffffffffffff60ffffffffff66ffffff47'),
  (b'DUP ',174784):bytes.fromhex('ff2affffffffff26ffffff'),
@@ -41,6 +41,12 @@ def pred(x,r=0,L=32):
  y=bytearray(x)
  for i in range(L,len(y)):y[i]=((y[i]+y[i-L]) if r else (x[i]-x[i-L]))&255
  return bytes(y)
+
+def ca(seed,n):
+ x=int.from_bytes(seed,'big');M=(1<<2048)-1;o=bytearray(seed)
+ while len(o)<n:
+  x=((x<<1)^(x|(x>>1)))&M;o+=x.to_bytes(256,'big')
+ return bytes(o[:n])
 
 def bm(a):
  C=B=1;L=0;m=-1;H=0
@@ -104,6 +110,8 @@ def compress(src,dst):
   z=bytearray()
   for j,code in enumerate(plan):
    x=cs[ids[j]][3]
+   if tag==b'CA30' and code==254:
+    d=cs[ids[j]][1][-4:]+x[:-4];assert ca(d[:256],n)==d;x=x[:252]+x[-4:]+bytes(n-256);z+=x;continue
    if code!=255:x=delta(x,cs[ids[code&31]][3],code>>5)
    w={b'IMG ':3,b'WAVE':2}.get(tag)
    if w:x=lane(x,w)
@@ -172,11 +180,15 @@ def decompress(src,dst):
    for j,L in {12: 1}.items():raw[j]=pred(raw[j],1,L)
    for j,L in {1: 4, 2: 4, 10: 16, 12: 4, 15: 16, 16: 4, 17: 4, 26: 4, 30: 4}.items():raw[j]=lane(raw[j],L,1)
   if w:raw=[lane(y,w,1) for y in raw]
-  if tag==b'CA30':raw=[pred(y,1) for y in raw]
+  if tag==b'CA30':
+   for j,y in enumerate(raw):
+    if plan[j]==254:
+     d=ca(cs[ids[j]][1][-4:]+y[:252],n);raw[j]=d[4:]+y[252:256]
+    else:raw[j]=pred(y,1)
   done=[None]*len(ids)
   def get(j):
    if done[j] is None:
-    code=plan[j];done[j]=raw[j] if code==255 else undo(raw[j],get(code&31),code>>5)
+    code=plan[j];done[j]=raw[j] if code in (254,255) else undo(raw[j],get(code&31),code>>5)
    return done[j]
   for j,i in enumerate(ids):cs[i][3]=get(j)
  rg=residual(cs,used);cm={1:(1,4),2:(2,10),6:(6,7),13:(13,14)};skip={4,7,10,14}
