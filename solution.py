@@ -31,6 +31,17 @@ def undo(d,parent,k):
  if k==2:return bytes((a+b)&255 for a,b in zip(d,parent))
  return bytes((b-a)&255 for a,b in zip(d,parent))
 
+def lane(x,w,r=0):
+ if not r:return b''.join(x[i::w] for i in range(w))
+ y=bytearray(len(x));o=0
+ for i in range(w):n=len(y[i::w]);y[i::w]=x[o:o+n];o+=n
+ return bytes(y)
+
+def pred(x,r=0):
+ y=bytearray(x)
+ for i in range(32,len(y)):y[i]=((y[i]+y[i-32]) if r else (x[i]-x[i-32]))&255
+ return bytes(y)
+
 def bm(a):
  C=B=1;L=0;m=-1;H=0
  for N,v in enumerate(a):
@@ -69,6 +80,9 @@ def compress(src,dst):
   for j,code in enumerate(plan):
    x=cs[ids[j]][3]
    if code!=255:x=delta(x,cs[ids[code&31]][3],code>>5)
+   w={b'IMG ':3,b'WAVE':2}.get(tag)
+   if w:x=lane(x,w)
+   if tag==b'CA30':x=pred(x)
    z+=x
   add(out,z)
  for ids in residual(cs,used):add(out,b''.join(cs[i][3] for i in ids))
@@ -115,6 +129,9 @@ def decompress(src,dst):
   cs[i][3]=bytes(x)
  for (tag,n),plan in F.items():
   ids=[i for i,c in enumerate(cs) if c[0]==tag and c[2]==n and i not in used];used.update(ids);x,o=take(a,o);raw=[x[j*n:(j+1)*n] for j in range(len(ids))]
+  w={b'IMG ':3,b'WAVE':2}.get(tag)
+  if w:raw=[lane(y,w,1) for y in raw]
+  if tag==b'CA30':raw=[pred(y,1) for y in raw]
   done=[None]*len(ids)
   def get(j):
    if done[j] is None:
