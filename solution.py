@@ -13,6 +13,7 @@ F={
  (b'WAVE',131090):bytes.fromhex('ff43ffffff41ffff232822ff'),
  (b'SEQ2',174784):bytes.fromhex('64ff2421ffff'),
  (b'SEQ2',149991):bytes.fromhex('21ffff'),
+ (b'SEQ2',124992):bytes.fromhex('ffffff'),
 }
 
 def chunks(data):
@@ -40,6 +41,12 @@ def lane(x,w,r=0):
 def pred(x,r=0,L=32):
  y=bytearray(x)
  for i in range(L,len(y)):y[i]=((y[i]+y[i-L]) if r else (x[i]-x[i-L]))&255
+ return bytes(y)
+
+def wpred(x,w,lag,en,r=0):
+ y=bytearray(x);M=1<<(8*w)
+ for i in range(lag*w,len(x)-w+1,w):
+  a=int.from_bytes(x[i:i+w],en);v=y if r else x;p=int.from_bytes(v[i-lag*w:i-(lag-1)*w],en);q=(a+p if r else a-p)%M;y[i:i+w]=q.to_bytes(w,en)
  return bytes(y)
 
 def ca(seed,n):
@@ -118,10 +125,11 @@ def compress(src,dst):
    if tag==b'IMG ' and j in {2: 4, 5: 1, 6: 2048, 8: 1, 9: 1, 12: 2048, 14: 4, 15: 1}:x=pred(x,0,{2: 4, 5: 1, 6: 2048, 8: 1, 9: 1, 12: 2048, 14: 4, 15: 1}[j])
    if tag==b'A181' and j in {1: 4, 2: 4, 10: 16, 12: 4, 15: 16, 16: 4, 17: 4, 26: 4, 30: 4}:x=lane(x,{1: 4, 2: 4, 10: 16, 12: 4, 15: 16, 16: 4, 17: 4, 26: 4, 30: 4}[j])
    if tag==b'A181' and j in {12: 1}:x=pred(x,0,{12: 1}[j])
+   if tag==b'SEQ2' and n==124992 and j in (1,2):x=wpred(x,4,2,'big' if j==1 else 'little')
    if tag==b'CA30':x=pred(x)
    z+=x
   add(out,z)
- rg=residual(cs,used);cm={1:(1,4),2:(2,10),6:(6,7),13:(13,14)};skip={4,7,10,14}
+ rg=residual(cs,used);cm={1:(1,4),6:(6,7),12:(12,13)};skip={4,7,13}
  for k,ids in enumerate(rg):
   if k in skip:continue
   ks=cm.get(k,(k,));add(out,b''.join(cs[i][3] for j in ks for i in rg[j]))
@@ -179,6 +187,8 @@ def decompress(src,dst):
   if tag==b'A181':
    for j,L in {12: 1}.items():raw[j]=pred(raw[j],1,L)
    for j,L in {1: 4, 2: 4, 10: 16, 12: 4, 15: 16, 16: 4, 17: 4, 26: 4, 30: 4}.items():raw[j]=lane(raw[j],L,1)
+  if tag==b'SEQ2' and n==124992:
+   for j in (1,2):raw[j]=wpred(raw[j],4,2,'big' if j==1 else 'little',1)
   if w:raw=[lane(y,w,1) for y in raw]
   if tag==b'CA30':
    for j,y in enumerate(raw):
@@ -191,7 +201,7 @@ def decompress(src,dst):
     code=plan[j];done[j]=raw[j] if code in (254,255) else undo(raw[j],get(code&31),code>>5)
    return done[j]
   for j,i in enumerate(ids):cs[i][3]=get(j)
- rg=residual(cs,used);cm={1:(1,4),2:(2,10),6:(6,7),13:(13,14)};skip={4,7,10,14}
+ rg=residual(cs,used);cm={1:(1,4),6:(6,7),12:(12,13)};skip={4,7,13}
  for k,ids in enumerate(rg):
   if k in skip:continue
   x,o=take(a,o);q=0
