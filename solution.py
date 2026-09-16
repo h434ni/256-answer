@@ -123,6 +123,8 @@ def compress(src,dst):
     d=cs[ids[j]][1][-4:]+x[:-4];assert ca(d[:256],n)==d;x=x[:252]+x[-4:]+bytes(n-256);z+=x;continue
    if tag==b'CA30' and code==255 and j in {2,4,13,20}:
     x=x[-4:]+bytes(n-4);z+=x;continue
+   if tag==b'CA30' and code==255 and j in {2,4,13,20}:
+    x=x[-4:]+bytes(n-4);z+=x;continue
    if code!=255:x=delta(x,cs[ids[code&31]][3],code>>5)
    w={b'IMG ':3,b'WAVE':2}.get(tag)
    if w:x=lane(x,w)
