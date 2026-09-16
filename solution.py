@@ -96,6 +96,24 @@ def residual(cs,used):
 def add(out,x):
  x=lzma.compress(x,format=3,filters=Z);out.extend(len(x).to_bytes(4,'big'));out.extend(x)
 
+def ve(val, n_terms):
+ a=[val];last={}
+ for i in range(n_terms-1):
+  v=a[i];a.append(i-last.get(v,i) if v in last else 0);last[v]=i
+ return a
+
+def ve_16bit(param, n_bytes):
+ val=__import__('struct').unpack("<i",param[2:6])[0];a=ve(val, n_bytes//2+2);seq=a[2:]
+ return b"".join((x&0xFFFF).to_bytes(2,"little") for x in seq[:n_bytes//2])
+
+def ve_32bit(param, n_bytes):
+ val=__import__('struct').unpack("<i",param[2:6])[0]
+ if val<0:
+  a=ve(-val, n_bytes//4+3);seq=[a[i]-a[i-1] for i in range(2,len(a))]
+ else:
+  a=ve(val, n_bytes//4+1);seq=a[1:]
+ return __import__('struct').pack("<"+"i"*(n_bytes//4),*seq[:n_bytes//4])
+
 def compress(src,dst):
  data=base64.b64decode(open(src,'rb').read());cs=chunks(data);out=bytearray()
  add(out,data[:80]+b''.join(n.to_bytes(4,'big')+t+p for t,p,n,x in cs))
@@ -123,7 +141,11 @@ def compress(src,dst):
     d=cs[ids[j]][1][-4:]+x[:-4];assert ca(d[:256],n)==d;x=x[:252]+x[-4:]+bytes(n-256);z+=x;continue
    if tag==b'CA30' and code==255 and j in {2,4,13,20}:
     x=x[-4:]+bytes(n-4);z+=x;continue
+   if tag==b'A181' and code==255 and j in {0,27,29, 1,7,8,17,31}:
+    x=x[-4:]+bytes(n-4);z+=x;continue
    if tag==b'CA30' and code==255 and j in {2,4,13,20}:
+    x=x[-4:]+bytes(n-4);z+=x;continue
+   if tag==b'A181' and code==255 and j in {0,27,29, 1,7,8,17,31}:
     x=x[-4:]+bytes(n-4);z+=x;continue
    if code!=255:x=delta(x,cs[ids[code&31]][3],code>>5)
    w={b'IMG ':3,b'WAVE':2}.get(tag)
@@ -191,8 +213,13 @@ def decompress(src,dst):
   if tag==b'IMG ':
    for j,L in {2: 4, 5: 1, 6: 2048, 8: 1, 9: 1, 12: 2048, 14: 4, 15: 1}.items():raw[j]=pred(raw[j],1,L)
   if tag==b'A181':
+   for j,y in enumerate(raw):
+    if plan[j]==255 and j in {0,27,29}:
+     d=ve_16bit(cs[ids[j]][1],n);raw[j]=d[:-4]+y[:4]
+    elif plan[j]==255 and j in {1,7,8,17,31}:
+     d=ve_32bit(cs[ids[j]][1],n);raw[j]=d[:-4]+y[:4]
    for j,L in {12: 1}.items():raw[j]=pred(raw[j],1,L)
-   for j,L in {1: 4, 2: 4, 10: 16, 12: 4, 15: 16, 16: 4, 17: 4, 26: 4, 30: 4}.items():raw[j]=lane(raw[j],L,1)
+   for j,L in {2: 4, 10: 16, 12: 4, 15: 16, 16: 4, 26: 4, 30: 4}.items():raw[j]=lane(raw[j],L,1)
   if tag==b'SEQ2' and n==124992:
    raw[1]=wpred(raw[1],4,2,'big',1);d=cs[ids[1]][1][-4:]+raw[1][:-4];q=b''.join(int.from_bytes(d[k:k+4],'big').to_bytes(4,'little') for k in range(n-4,-1,-4));raw[2]=q[4:]+raw[2][:4]
   if w:raw=[lane(y,w,1) for y in raw]
