@@ -6,7 +6,7 @@ from hashlib import sha256
 Z=[{'id':33,'preset':7}]
 F={
  (b'IMG ',655360):bytes.fromhex('2929ff222eff2d21ffff2d2dff25ffff'),
- (b'CA30',253952):bytes.fromhex('2542fe20feff7dff502fff28fffeffffff4ffffffeff4822213739765d7127ff'),
+ (b'CA30',253952):bytes.fromhex('2542ff20ffff7dff502fff28ffffffffff4ffffffeff4822213739765d7127ff'),
  (b'A181',237600):bytes.fromhex('ffffffffffffffffffffffffffffffffffffff3fffffff27ffffffffffffffff'),
  (b'PRNG',240328):bytes.fromhex('ffffffffffff40ffffffffffff60ffffffffff66ffffff47'),
  (b'DUP ',174784):bytes.fromhex('ff2affffffffff26ffffff'),
@@ -121,6 +121,8 @@ def compress(src,dst):
     d=cs[ids[1]][1][-4:]+cs[ids[1]][3][:-4];q=b''.join(int.from_bytes(d[k:k+4],'big').to_bytes(4,'little') for k in range(n-4,-1,-4));assert q==cs[ids[j]][1][-4:]+x[:-4];z+=x[-4:]+bytes(n-4);continue
    if tag==b'CA30' and code==254:
     d=cs[ids[j]][1][-4:]+x[:-4];assert ca(d[:256],n)==d;x=x[:252]+x[-4:]+bytes(n-256);z+=x;continue
+   if tag==b'CA30' and code==255 and j in {2,4,13,20}:
+    x=x[-4:]+bytes(n-4);z+=x;continue
    if code!=255:x=delta(x,cs[ids[code&31]][3],code>>5)
    w={b'IMG ':3,b'WAVE':2}.get(tag)
    if w:x=lane(x,w)
@@ -196,6 +198,8 @@ def decompress(src,dst):
    for j,y in enumerate(raw):
     if plan[j]==254:
      d=ca(cs[ids[j]][1][-4:]+y[:252],n);raw[j]=d[4:]+y[252:256]
+    elif plan[j]==255 and j in {2,4,13,20}:
+     seed=bytearray(256);seed[123]=1;d=ca(seed,n);raw[j]=d[:-4]+y[:4]
     else:raw[j]=pred(y,1)
   done=[None]*len(ids)
   def get(j):
