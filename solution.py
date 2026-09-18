@@ -749,21 +749,15 @@ def build_plan(data):
     roots = {j: score3(samples[j]) for j in range(n)}
     plan = [255] * n
     placed = []
-    remaining = set(range(n))
-    while remaining:
-        best = None
-        for j in sorted(remaining):
-            if best is None or roots[j] < best[0]:
-                best = (roots[j], j, None)
-            ip = ints[j]
-            for p in placed:
-                c = len(zlib.compress((ip ^ ints[p]).to_bytes(L0, "big"), 6))
-                if c < best[0]:
-                    best = (c, j, p)
-        c, j, p = best
-        plan[j] = 255 if p is None else (32 | p)
+    for j in range(n):
+        best = (roots[j], None)
+        ip = ints[j]
+        for p in placed:
+            c = len(zlib.compress((ip ^ ints[p]).to_bytes(L0, "big"), 6))
+            if c < best[0]:
+                best = (c, p)
+        plan[j] = 255 if best[1] is None else (32 | best[1])
         placed.append(j)
-        remaining.discard(j)
     return bytes(plan)
 
 def compress(src, dst):
