@@ -683,6 +683,56 @@ def xpick(blk):
         sc=xscore(xfwd(big,k))
         if best is None or sc<best:best,bk=sc,k
     return bk
+def rel_key(cts, lag):
+    votes = [None] * 251
+    for ct in cts:
+        nb = min(len(ct), 160000)
+        for j in range(nb - lag):
+            a = j % 251
+            v = votes[a]
+            if v is None: v = votes[a] = [0]*256
+            v[ct[j] ^ ct[j+lag]] += 1
+    rel = []
+    for a in range(251):
+        if votes[a]:
+            v = votes[a]; m = max(range(256), key=lambda x: v[x])
+            rel.append((a, (a+lag)%251, m))
+    Kc = [None]*251; Kc[0] = 0
+    changed = True
+    while changed:
+        changed = False
+        for a, b, m in rel:
+            if Kc[a] is not None and Kc[b] is None: Kc[b] = Kc[a]^m; changed = True
+            elif Kc[b] is not None and Kc[a] is None: Kc[a] = Kc[b]^m; changed = True
+    if any(x is None for x in Kc): return None
+    return Kc
+
+def pick_rel_key(cs, hid, pln, kml, hp):
+    cts = [bytes(cs[i][4]) for i in hid[:2]]
+    s0 = cts[0][:49152]
+    tot = sum(hp) + 256
+    import math as _m
+    logp = [_m.log((hp[b]+1)/tot) for b in range(256)]
+    def zc(K):
+        return len(zlib.compress(unmask(s0, K), 6))
+    best = zc(kml); bestk = None
+    ref = bytes(cs[pln[0]][4])
+    nb2 = min(40000, len(ref) - 5)
+    lags = sorted((1,2,3,4), key=lambda L: -sum(1 for j in range(0, nb2, 7) if ref[j]==ref[j+L]))
+    for lag in lags[:2]:
+        Kc = rel_key(cts, lag)
+        if Kc is None: continue
+        gbest = None
+        for gc in range(256):
+            pt = bytes(a ^ b ^ gc for a, b in zip(s0[:8192], Kc))
+            sc = sum(logp[b] for b in pt)
+            if gbest is None or sc > gbest[0]: gbest = (sc, gc)
+        K = bytes(x ^ gbest[1] for x in Kc)
+        z = zc(K)
+        if z < best:
+            best = z; bestk = K
+    return bestk
+
 def compress(src, dst):
     d = base64.b64decode(open(src, "rb").read())
     cs = chunks(d)
@@ -717,6 +767,10 @@ def compress(src, dst):
                 for j in range(min(len(p), Q * 1024)):
                     hc[j % Q][p[j]] += 1
             k = ml_key(hp, hc)
+            if g[0] in {b"IMG ", b"WAVE", b"NOIZ", b"SEQ2", b"HASH", b"SPRS", b"LOGS"}:
+                kc = pick_rel_key(cs, hid, pln, k, hp)
+                if kc is not None:
+                    k = kc
         keytab += k
         for i in hid:
             cs[i][4] = unmask(cs[i][4], k)
