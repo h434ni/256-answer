@@ -732,6 +732,39 @@ def pick_rel_key(cs, hid, pln, kml, hp):
         if z < best:
             best = z; bestk = K
     return bestk
+def build_plan(data):
+    n = len(data)
+    def samp(x):
+        L = len(x)
+        if L <= 49152: return bytes(x)
+        w = 16384
+        return bytes(x[:w] + x[L//2:L//2+w] + x[L-w:])
+    samples = [samp(x) for x in data]
+    ints = [int.from_bytes(s, "big") for s in samples]
+    L0 = len(samples[0])
+    def score3(b):
+        return min(len(zlib.compress(b, 6)),
+                   len(zlib.compress(xfwd(b, 31), 6)),
+                   len(zlib.compress(xfwd(b, 38), 6)))
+    roots = {j: score3(samples[j]) for j in range(n)}
+    plan = [255] * n
+    placed = []
+    remaining = set(range(n))
+    while remaining:
+        best = None
+        for j in sorted(remaining):
+            if best is None or roots[j] < best[0]:
+                best = (roots[j], j, None)
+            ip = ints[j]
+            for p in placed:
+                c = len(zlib.compress((ip ^ ints[p]).to_bytes(L0, "big"), 6))
+                if c < best[0]:
+                    best = (c, j, p)
+        c, j, p = best
+        plan[j] = 255 if p is None else (32 | p)
+        placed.append(j)
+        remaining.discard(j)
+    return bytes(plan)
 
 def compress(src, dst):
     d = base64.b64decode(open(src, "rb").read())
@@ -869,6 +902,7 @@ def compress(src, dst):
                 tag[i] = t
                 break
     fplan = []
+    fplan_plan = {}
     for g in FPLAN_KEYS:
         ids = [i for i, c in enumerate(cs)
                if c[0] == g[0] and c[3] == g[1] and tag[i] == T_RESID]
@@ -876,7 +910,9 @@ def compress(src, dst):
             continue
         for i in ids:
             tag[i] = T_FPLAN
-        fplan.append((len(ids), FPLAN[g]))
+        pl = build_plan([cs[i][4] for i in ids])
+        fplan_plan[g] = pl
+        fplan.append((len(ids), pl))
     fplan_on = {c[0]: [] for c in cs}
     for i, c in enumerate(cs):
         if tag[i] == T_FPLAN:
@@ -940,7 +976,7 @@ def compress(src, dst):
                if c[0] == g[0] and c[3] == g[1] and tag[i] == T_FPLAN]
         if not ids:
             continue
-        plan = FPLAN[g]
+        plan = fplan_plan[g]
         parts = []
         for j, code in enumerate(plan):
             x = cs[ids[j]][4]
