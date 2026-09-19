@@ -612,7 +612,7 @@ def undelta(d, b, k):
     if k == 2:
         return bytes((x+y) & 255 for x, y in zip(d, b))
     return bytes((y - x) & 255 for x, y in zip(d, b))
-XT_NAMES=("raw","lane2","lane3","lane4","lane5","lane6","lane7","lane8","lane12","lane16","lane24","lane32","x1","x2","x3","x4","x6","x8","x12","x16","x32","x64","x128","x256","x512","x1024","x2048","x4096","x8192","x16384","x32768","d1","d2","d3","d4","d6","d8","d12","lane3d1","lane4d1","lane2d1","lane3x1","mpack","lane3d3","lane2d2","lane4d4")
+XT_NAMES=("raw","lane2","lane3","lane4","lane5","lane6","lane7","lane8","lane12","lane16","lane24","lane32","x1","x2","x3","x4","x6","x8","x12","x16","x32","x64","x128","x256","x512","x1024","x2048","x4096","x8192","x16384","x32768","d1","d2","d3","d4","d6","d8","d12","lane3d1","lane4d1","lane2d1","lane3x1","mpack","lane3d3","lane2d2","lane4d4","d2048")
 XT_DELTA = ("d1", "d2", "d3", "d4", "lane3d1", "lane4d1", "lane2d1")
 def x_lane(b, w):
     return b"".join(b[i::w] for i in range(w))
