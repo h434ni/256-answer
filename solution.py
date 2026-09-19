@@ -598,17 +598,21 @@ MT_L1=20188
 MT_CW=(MT_L1+8)//8
 def delta(a, b, k):
     if k ==1:
-        return bytes(x^y for x, y in zip(a, b))
+        return (int.from_bytes(a, "big") ^ int.from_bytes(b, "big")).to_bytes(len(a), "big")
+    if k == 4:
+        return bytes(x != y for x, y in zip(a, b))
     if k == 2:
         return bytes((x-y) & 255 for x, y in zip(a, b))
     return bytes((y - x) & 255 for x, y in zip(a, b))
 def undelta(d, b, k):
     if k ==1:
-        return bytes(x^y for x, y in zip(d, b))
+        return (int.from_bytes(d, "big") ^ int.from_bytes(b, "big")).to_bytes(len(d), "big")
+    if k == 4:
+        return bytes((y + (1 if y & 1 == 0 else -1)) if m else y for m, y in zip(d, b))
     if k == 2:
         return bytes((x+y) & 255 for x, y in zip(d, b))
     return bytes((y - x) & 255 for x, y in zip(d, b))
-XT_NAMES=("raw","lane2","lane3","lane4","lane5","lane6","lane7","lane8","lane12","lane16","lane24","lane32","x1","x2","x3","x4","x6","x8","x12","x16","x32","x64","x128","x256","x512","x1024","x2048","x4096","x8192","x16384","x32768","d1","d2","d3","d4","d6","d8","d12","lane3d1","lane4d1","lane2d1","lane3x1")
+XT_NAMES=("raw","lane2","lane3","lane4","lane5","lane6","lane7","lane8","lane12","lane16","lane24","lane32","x1","x2","x3","x4","x6","x8","x12","x16","x32","x64","x128","x256","x512","x1024","x2048","x4096","x8192","x16384","x32768","d1","d2","d3","d4","d6","d8","d12","lane3d1","lane4d1","lane2d1","lane3x1","mpack")
 XT_DELTA = ("d1", "d2", "d3", "d4", "lane3d1", "lane4d1", "lane2d1")
 def x_lane(b, w):
     return b"".join(b[i::w] for i in range(w))
@@ -640,6 +644,16 @@ def x_uxor(b, L):
     return bytes(out)
 def xfwd(b, k):
     nm = XT_NAMES[k]
+    if nm == "mpack":
+        n = len(b)
+        if any(b):
+            if min(b) < 0 or max(b) > 1:
+                return b
+        out = bytearray(n)
+        out[0] = 2
+        for i, v in enumerate(b):
+            if v: out[1 + (i >> 3)] |= 1 << (i & 7)
+        return bytes(out)
     if nm == "raw":
         return b
     if nm.startswith("lane"):
@@ -655,6 +669,14 @@ def xfwd(b, k):
     return x_delta(b, int(nm[1:]))
 def xbwd(b, k):
     nm = XT_NAMES[k]
+    if nm == "mpack":
+        if not b or b[0] != 2:
+            return b
+        n = len(b)
+        out = bytearray(n)
+        for i in range(n):
+            if b[1 + (i >> 3)] >> (i & 7) & 1: out[i] = 1
+        return bytes(out)
     if nm == "raw":
         return b
     if nm.startswith("lane"):
@@ -676,8 +698,8 @@ def xpick(blk):
     w=min(16384,max(4096,n//8))
     small=blk[:w]+blk[n//3:n//3+w]+blk[2*n//3:2*n//3+w]+blk[n-w:]
     scored=sorted((xscore(xfwd(small,k)),k) for k in range(len(XT_NAMES)))
-    top=[k for _,k in scored[:6]]
-    w2=min(131072,max(4096,n))
+    top=[k for _,k in scored[:4]]
+    w2=min(65536,max(4096,n))
     big=blk[:w2]+blk[n//2:n//2+w2] if 2*w2<n else blk
     best,bk=None,top[0]
     for k in top:
@@ -752,13 +774,34 @@ def build_plan(data):
     plan = [255] * n
     placed = []
     for j in range(n):
-        best = (roots[j], None)
+        bx = (roots[j], None)
+        b4 = None
         ip = ints[j]
+        sp = samples[j]
         for p in placed:
             c = len(zlib.compress((ip ^ ints[p]).to_bytes(L0, "big"), 6))
-            if c < best[0]:
-                best = (c, p)
-        plan[j] = 255 if best[1] is None else (32 | best[1])
+            if c < bx[0]:
+                bx = (c, p)
+            m4 = bytes(x != y for x, y in zip(sp, samples[p]))
+            c4 = len(zlib.compress(m4, 6))
+            if b4 is None or c4 < b4[0]:
+                b4 = (c4, p)
+        plan[j] = 255 if bx[1] is None else (32 | bx[1])
+        if bx[1] is None and b4 is not None or (b4 is not None and b4[0] < bx[0]):
+            a = data[j]; b = data[b4[1]]
+            m4 = bytes(x != y for x, y in zip(a, b))
+            ok = True
+            for m, x, y in zip(m4, a, b):
+                if m:
+                    dd = x - y
+                    if dd == 1:
+                        if y & 1: ok = False; break
+                    elif dd == -1:
+                        if not y & 1: ok = False; break
+                    else:
+                        ok = False; break
+            if ok:
+                plan[j] = 128 | b4[1]
         placed.append(j)
     return bytes(plan)
 
