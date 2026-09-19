@@ -669,18 +669,20 @@ def xbwd(b, k):
     return x_undelta(b, int(nm[1:]))
 def xscore(b):
     return len(zlib.compress(b, 6))
+XZ=[{"id":33,"preset":6,"nice_len":64,"dict_size":1<<24}]
 def xpick(blk):
     n=len(blk)
     if n<4096:return 0
     w=min(16384,max(4096,n//8))
     small=blk[:w]+blk[n//3:n//3+w]+blk[2*n//3:2*n//3+w]+blk[n-w:]
     scored=sorted((xscore(xfwd(small,k)),k) for k in range(len(XT_NAMES)))
-    top=[k for _,k in scored[:5]]
-    w2=min(196608,max(4096,n))
+    top=[k for _,k in scored[:6]]
+    w2=min(131072,max(4096,n))
     big=blk[:w2]+blk[n//2:n//2+w2] if 2*w2<n else blk
     best,bk=None,top[0]
     for k in top:
-        sc=xscore(xfwd(big,k))
+        try:sc=len(lzma.compress(xfwd(big,k),format=3,filters=XZ))
+        except Exception:sc=1<<30
         if best is None or sc<best:best,bk=sc,k
     return bk
 def rel_key(cts, lag):
