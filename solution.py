@@ -590,7 +590,7 @@ def mt_fit_check(payload):
             return None
     return B
 T_RESID, T_SHA, T_LCG, T_XS, T_A181, T_CA, _UNUSED, T_MT1, T_TOC, T_REF, \
-    T_FPLAN, T_RC, T_CL, T_MT4R, T_CNST, T_CNST1 = range(16)
+    T_FPLAN, T_RC, T_CL, T_MT4R, T_CNST, T_CNST1, T_MFAM = range(17)
 REF_TABLE=((91,106,0),(247,173,0),(164,123,0),(201,14,0),(232,52,0),(251,142,0),(203,199,0),(209,199,0),(187,111,1),(15,9,2),(32,17,3),(238,9,3),(27,11,3),(163,129,3),(227,137,3),(1,0,2),(31,20,1),(103,78,2),(178,49,2),(188,152,2))
 FPLAN={(b"IMG ",655360):bytes.fromhex("ff202121ff2420222728252aff2b2424"),(b"DUP ",174784):bytes.fromhex("ff2affffffffff26ffffff"),(b"WAVE",131090):bytes.fromhex("ffffff212124ff2327"),(b"SEQ2",174784):bytes.fromhex("64ff2421ffff"),(b"SEQ2",149991):bytes.fromhex("21ffff")}
 FPLAN_KEYS = tuple(FPLAN)
@@ -612,7 +612,7 @@ def undelta(d, b, k):
     if k == 2:
         return bytes((x+y) & 255 for x, y in zip(d, b))
     return bytes((y - x) & 255 for x, y in zip(d, b))
-XT_NAMES=("raw","lane2","lane3","lane4","lane5","lane6","lane7","lane8","lane12","lane16","lane24","lane32","x1","x2","x3","x4","x6","x8","x12","x16","x32","x64","x128","x256","x512","x1024","x2048","x4096","x8192","x16384","x32768","d1","d2","d3","d4","d6","d8","d12","lane3d1","lane4d1","lane2d1","lane3x1","mpack")
+XT_NAMES=("raw","lane2","lane3","lane4","lane5","lane6","lane7","lane8","lane12","lane16","lane24","lane32","x1","x2","x3","x4","x6","x8","x12","x16","x32","x64","x128","x256","x512","x1024","x2048","x4096","x8192","x16384","x32768","d1","d2","d3","d4","d6","d8","d12","lane3d1","lane4d1","lane2d1","lane3x1","mpack","lane3d3","lane2d2","lane4d4")
 XT_DELTA = ("d1", "d2", "d3", "d4", "lane3d1", "lane4d1", "lane2d1")
 def x_lane(b, w):
     return b"".join(b[i::w] for i in range(w))
@@ -661,6 +661,9 @@ def xfwd(b, k):
         v = x_lane(b, w)
         if nm.endswith("d1"):
             return x_delta(v, 1)
+        if "d" in nm[4:]:
+            dd = int(nm[4:].split("d")[1])
+            return x_delta(v, dd)
         if nm.endswith("x1"):
             return x_xor(v, 1)
         return v
@@ -683,6 +686,9 @@ def xbwd(b, k):
         w = int(nm[4:].split("d")[0].split("x")[0])
         if nm.endswith("d1"):
             b = x_undelta(b, 1)
+        elif "d" in nm[4:]:
+            dd = int(nm[4:].split("d")[1])
+            b = x_undelta(b, dd)
         elif nm.endswith("x1"):
             b = x_uxor(b, 1)
         return x_unlane(b, w)
@@ -940,6 +946,34 @@ def compress(src, dst):
             if cnst_gen(c[1], c[3], ramp) == c[4]:
                 tag[i] = t
                 break
+    fams = []
+    if (b"IMG ", 655360) in groups:
+        ig = groups[(b"IMG ", 655360)]
+        isubs = {}
+        for i in ig:
+            isubs.setdefault(cs[i][1], []).append(i)
+        fe = 0
+        for e in sorted(isubs):
+            mem = sorted(isubs[e])
+            if len(mem) < 3:
+                continue
+            ref = cs[mem[0]][4]
+            base = bytes(v & 254 for v in ref)
+            bi_ = int.from_bytes(base, "big")
+            msk = ((1 << (8 * len(base))) - 1) * 254 // 255
+            ok = True
+            for i in mem:
+                iv = int.from_bytes(cs[i][4], "big")
+                if (iv & msk) != bi_:
+                    ok = False
+                    break
+            if not ok:
+                continue
+            for i in mem:
+                tag[i] = T_MFAM
+                cpar[i] = bytes((fe,))
+            fams.append((base, mem))
+            fe += 1
     fplan = []
     fplan_plan = {}
     for g in FPLAN_KEYS:
@@ -1028,6 +1062,12 @@ def compress(src, dst):
             ks = pick_parts([parts[j] for j in sub])
             xchoices += bytes(ks)
             gblocks.append(encode_parts([parts[j] for j in sub], ks))
+    for base, mem in fams:
+        MP = XT_NAMES.index("mpack")
+        parts = [base] + [bytes(v & 1 for v in cs[i][4]) for i in mem]
+        ks = [xpick(parts[0])] + [MP] * len(mem)
+        xchoices += bytes(ks)
+        gblocks.append(b"".join(xfwd(p, k) for p, k in zip(parts, ks)))
     hd += bytes(xchoices) + len(xchoices).to_bytes(4,"big")
     mtb = bytearray()
     for i in mt1:
@@ -1151,6 +1191,7 @@ def decompress(src, dst):
             cs[i][4] =b"".join(v.to_bytes(4,"big") for v in w[:n//4])
             rawmode.add(i)
     refs = []
+    mfams = []
     for i in range(nc):
         t = tags[i]
         c = cs[i]
@@ -1183,6 +1224,9 @@ def decompress(src, dst):
         elif t == T_REF:
             refs.append((i, body[off], body[off + 1]))
             off += 2
+        elif t == T_MFAM:
+            mfams.append((i, body[off]))
+            off += 1
         elif t == T_TOC:
             r = bytearray((80).to_bytes(4,"big"))
             cur = 80
@@ -1247,6 +1291,19 @@ def decompress(src, dst):
             return done[j]
         for j, i in enumerate(ids):
             cs[i][4] = get(j)
+    if mfams:
+        byf = {}
+        for i, fe in mfams: byf.setdefault(fe, []).append(i)
+        MP = XT_NAMES.index("mpack")
+        for fe in sorted(byf):
+            mem = sorted(byf[fe])
+            n_img = cs[mem[0]][3]
+            x, o = take_c(a, o, cc[bi]); bi += 1
+            base = xbwd(x[:n_img], xtab[xi]); xi += 1
+            q = n_img
+            for i in mem:
+                mk = xbwd(x[q:q + n_img], xtab[xi]); xi += 1; q += n_img
+                cs[i][4] = bytes(y + m for y, m in zip(base, mk))
     todo = list(refs)
     while todo:
         nxt = []
