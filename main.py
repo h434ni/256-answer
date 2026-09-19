@@ -1,0 +1,1 @@
+import lzma;exec(lzma.decompress(open("p","rb").read()))
